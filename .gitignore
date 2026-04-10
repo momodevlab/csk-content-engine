@@ -11,4 +11,8 @@ performance/*/
 *.log
 node_modules/
 .DS_Store
-remotion-videos/
+remotion-videos/node_modules/
+linkedin_session.json
+seen_stories.json
+pending_approvals.json
+published_content.json

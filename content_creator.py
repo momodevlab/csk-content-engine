@@ -128,6 +128,37 @@ def _idea_context(idea: dict) -> str:
     return "\n".join(parts)
 
 
+def _style_guidance(idea: dict) -> str:
+    """
+    Builds a style instruction block from viral_style_patterns if available.
+    Returns an empty string if no patterns were captured for this idea.
+    """
+    patterns = idea.get("viral_style_patterns")
+    if not patterns:
+        return ""
+
+    lines = ["VIRAL STYLE BLUEPRINT (mirror this structure — not the words):"]
+    if patterns.get("hook_type"):
+        lines.append(f"- Hook type: {patterns['hook_type']}")
+    if patterns.get("hook_notes"):
+        lines.append(f"  How: {patterns['hook_notes']}")
+    if patterns.get("paragraph_rhythm"):
+        lines.append(f"- Paragraph rhythm: {patterns['paragraph_rhythm']}")
+    if patterns.get("body_structure"):
+        lines.append(f"- Body flow: {patterns['body_structure']}")
+    if patterns.get("transition_style"):
+        lines.append(f"- Transitions: {patterns['transition_style']}")
+    if patterns.get("cta_style"):
+        lines.append(f"- CTA style: {patterns['cta_style']}")
+    if patterns.get("cta_notes"):
+        lines.append(f"  How: {patterns['cta_notes']}")
+    if patterns.get("emotional_trigger"):
+        lines.append(f"- Lead emotional trigger: {patterns['emotional_trigger']}")
+    if patterns.get("formatting_notes"):
+        lines.append(f"- Formatting: {patterns['formatting_notes']}")
+    return "\n".join(lines)
+
+
 # ---------------------------------------------------------------------------
 # Format generators — Track 1
 # ---------------------------------------------------------------------------
@@ -135,21 +166,23 @@ def _idea_context(idea: dict) -> str:
 def create_linkedin_post(idea: dict, client: Anthropic) -> "Optional[str]":
     """
     Generates a 150-300 word LinkedIn text post from a Track 1 idea.
-    Structure: Hook → Problem → Insight → Practical takeaway → CTA.
+    Structure mirrors the viral style patterns extracted from the source post.
     Ends with "What's your experience with this? Drop a comment below."
     Includes 3-5 hashtags. Never starts with "I" or "Just".
     """
     context = _idea_context(idea)
-    prompt = f"""{context}
+    style = _style_guidance(idea)
 
+    style_block = f"\n\n{style}\n" if style else ""
+
+    prompt = f"""{context}{style_block}
 Write a LinkedIn text post for CSK Tech Solutions. Requirements:
 - 150-300 words
-- Line 1 must be a single-line hook: a surprising stat, bold claim, or counterintuitive truth that stops the scroll
-- Structure after the hook: Problem → Insight → Practical takeaway → CTA
 - Do NOT start with "I" or "Just"
 - End with exactly: "What's your experience with this? Drop a comment below."
 - Add 3-5 relevant hashtags on the last line (e.g. #Automation #AccountingTech #AITools #CSKTechSolutions)
 - Do not sound like a press release. Write like a person.
+{f"- Follow the VIRAL STYLE BLUEPRINT above for structure and rhythm. Use the same hook type, body flow, and CTA approach — but with CSK's voice and your own words." if style else "- Line 1 must be a single-line hook: a surprising stat, bold claim, or counterintuitive truth that stops the scroll. Structure after the hook: Problem → Insight → Practical takeaway → CTA."}
 - Output only the post text. No preamble, no explanation."""
 
     return _call_claude(client, prompt, "linkedin_post")
@@ -158,16 +191,19 @@ Write a LinkedIn text post for CSK Tech Solutions. Requirements:
 def create_twitter_thread(idea: dict, client: Anthropic) -> "Optional[List[str]]":
     """
     Generates an 8-10 tweet Twitter/X thread from a Track 1 idea.
-    Tweet 1 is the scroll-stopping hook. Tweets 2-8 are numbered points.
-    Tweet 9 is a "The short version:" summary. Tweet 10 is CTA + follow.
+    Tweet 1 mirrors the viral hook style from the source post.
+    Tweets 2-8 are numbered points. Tweet 9 is summary. Tweet 10 is CTA.
     Returns a list of strings (one per tweet), max 280 chars each.
     """
     context = _idea_context(idea)
-    prompt = f"""{context}
+    style = _style_guidance(idea)
 
+    style_block = f"\n\n{style}\n" if style else ""
+
+    prompt = f"""{context}{style_block}
 Write a Twitter/X thread for CSK Tech Solutions. Requirements:
 - 8-10 tweets total
-- Tweet 1: The most surprising or counterintuitive insight — must make someone stop scrolling. No number prefix on tweet 1.
+- Tweet 1: Scroll-stopping hook — no number prefix.{" Mirror the hook type and emotional trigger from the VIRAL STYLE BLUEPRINT above." if style else " Use the most surprising or counterintuitive insight."}
 - Tweets 2-8: Numbered (2/ 3/ etc.), one clear point per tweet
 - Tweet 9: Start with "The short version:" — 1-2 sentence summary
 - Tweet 10: CTA + "Follow @CSKTechSolutions for more"

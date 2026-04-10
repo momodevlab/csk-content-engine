@@ -336,12 +336,15 @@ def scrape_twitter() -> list[dict]:
     """
     Searches Twitter/X recent tweets using bearer token (read-only).
     Filters to tweets with >= 50 likes from the last 24 hours.
-    Returns list of idea dicts.
+    Returns list of idea dicts. Skips silently if no bearer token is set.
     """
     logger.info("Scraping Twitter/X...")
     results = []
     try:
-        bearer_token = os.environ["TWITTER_BEARER_TOKEN"]
+        bearer_token = os.environ.get("TWITTER_BEARER_TOKEN", "")
+        if not bearer_token:
+            logger.info("Twitter/X: no bearer token set, skipping")
+            return results
         headers = {"Authorization": f"Bearer {bearer_token}"}
         params = {
             "query": TWITTER_QUERY,
@@ -495,6 +498,75 @@ def score_all_ideas(items: list[dict]) -> list[dict]:
     return scored
 
 
+STYLE_ANALYSIS_PROMPT = """Analyze the writing structure and style of this high-engagement post.
+Your job is to extract the structural blueprint so a different writer can mirror the same flow
+and rhythm — NOT the topic or specific words.
+
+Post title: {title}
+Post body: {body}
+Source: {source}
+Engagement: {engagement_summary}
+
+Return ONLY valid JSON with no extra text:
+{{
+  "hook_type": "<one of: shocking_stat | bold_claim | counterintuitive_truth | direct_question | short_story | number_list_opener | pain_point>",
+  "hook_notes": "<1 sentence describing exactly how the hook is constructed — e.g. 'Opens with a specific dollar figure loss, then immediately pivots to a common mistake'>",
+  "paragraph_rhythm": "<one of: short_punchy (1-2 sentences each) | medium_mix (2-4 sentences, varied) | long_form (dense paragraphs)>",
+  "body_structure": "<describe the flow in 1-2 sentences — e.g. 'States the problem, gives 3 numbered reasons why it happens, then flips to the solution'>",
+  "transition_style": "<how the post moves from hook to body to CTA — e.g. 'Uses a line break + rhetorical question to pivot between each section'>",
+  "cta_style": "<one of: soft_question | direct_ask | social_proof_ask | challenge | resource_offer>",
+  "cta_notes": "<1 sentence describing the exact CTA construction>",
+  "emotional_trigger": "<one of: fear_of_missing_out | frustration | curiosity | aspiration | validation | urgency>",
+  "formatting_notes": "<line breaks, whitespace, use of bullets/numbers, capitalization patterns — describe specifically>"
+}}"""
+
+
+def analyze_viral_style(items: list[dict], client: Anthropic) -> list[dict]:
+    """
+    Takes the top-scored items that have body text and extracts their structural
+    writing patterns using Claude. Adds 'viral_style_patterns' key to each item.
+    Items without body text are skipped (patterns key set to None).
+    Only analyzes items with engagement_signal >= 2 to focus on genuinely viral content.
+    """
+    logger.info("Analyzing viral writing styles from top-scored items...")
+
+    for item in items:
+        body = item.get("body_preview", "") or item.get("summary", "")
+        engagement_signal = item.get("scores", {}).get("engagement_signal", 0)
+
+        # Only analyze items with real body text and meaningful engagement
+        if not body or len(body) < 100 or engagement_signal < 2:
+            item["viral_style_patterns"] = None
+            continue
+
+        engagement = item.get("engagement", {})
+        engagement_summary = ", ".join(f"{k}: {v}" for k, v in engagement.items())
+
+        prompt = STYLE_ANALYSIS_PROMPT.format(
+            title=item.get("title", ""),
+            body=body[:800],
+            source=item.get("source", ""),
+            engagement_summary=engagement_summary,
+        )
+
+        try:
+            message = client.messages.create(
+                model="claude-opus-4-6",
+                max_tokens=600,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            raw = message.content[0].text.strip()
+            patterns = json.loads(raw)
+            item["viral_style_patterns"] = patterns
+            logger.info(f"Style extracted for '{item['title'][:60]}': {patterns.get('hook_type')} hook, {patterns.get('paragraph_rhythm')} rhythm")
+            api_delay()
+        except Exception as e:
+            logger.warning(f"Style analysis failed for '{item.get('title', '')[:60]}': {e}")
+            item["viral_style_patterns"] = None
+
+    return items
+
+
 # ---------------------------------------------------------------------------
 # Main entry point
 # ---------------------------------------------------------------------------
@@ -550,13 +622,17 @@ def run_idea_scraper(date_str: str) -> list[dict]:
     # 4. Score
     scored_items = score_all_ideas(all_items)
 
-    # 5. Save scored
+    # 5. Analyze viral writing styles from top 10 (only items with body text + high engagement)
+    client = Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
+    scored_items[:10] = analyze_viral_style(scored_items[:10], client)
+
+    # 6. Save scored
     scored_path = output_dir / "scored_ideas.json"
     with open(scored_path, "w") as f:
         json.dump(scored_items, f, indent=2)
     logger.info(f"Saved scored ideas → {scored_path}")
 
-    # 6. Return top 3
+    # 7. Return top 3
     top_3 = scored_items[:3]
     logger.info("=== Top 3 ideas ===")
     for i, idea in enumerate(top_3, 1):

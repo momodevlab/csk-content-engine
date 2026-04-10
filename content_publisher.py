@@ -140,7 +140,7 @@ def post_track1_for_approval(
     linkedin_preview = linkedin_text[:500] + (" ... [see file]" if len(linkedin_text) > 500 else "")
 
     twitter_thread = content.get("twitter_thread") or []
-    twitter_preview = "\n".join(twitter_thread[:2]) if twitter_thread else "(no thread generated)"
+    twitter_full = "\n\n".join(twitter_thread) if twitter_thread else "(no thread generated)"
 
     score = idea.get("scores", {}).get("total", "—")
     source = idea.get("source", "unknown")
@@ -153,14 +153,14 @@ def post_track1_for_approval(
     text = (
         f"📱 *CONTENT READY FOR APPROVAL — Track 1*\n\n"
         f"📅 Scheduled: Tomorrow at 9:00 AM CST\n"
-        f"📌 Platforms: LinkedIn + Twitter/X + Blog\n"
+        f"📌 Platforms: LinkedIn + Blog (Twitter: copy & post manually)\n"
         f"🎯 Audience: {audience}\n"
         f"💡 Source: {source_label} | {engagement_str}\n"
         f"🏆 Idea score: {score}/10\n\n"
         f"{DIVIDER}\n"
         f"📝 *LINKEDIN POST PREVIEW:*\n{linkedin_preview}\n\n"
         f"{DIVIDER}\n"
-        f"🐦 *TWITTER THREAD (first 2 tweets):*\n{twitter_preview}\n\n"
+        f"🐦 *TWITTER/X THREAD (copy & post manually):*\n{twitter_full}\n\n"
         f"{DIVIDER}\n"
         f"✅ Approve  ❌ Reject  ✏️ Edit\n"
         f"⏰ Auto-approves in 24 hours if no response"
@@ -741,9 +741,7 @@ def _publish_track1(date_str: str) -> None:
         publish_linkedin_post(post_text, scheduled_time=scheduled)
 
     if twitter_path.exists():
-        raw = twitter_path.read_text()
-        tweets = [t.strip() for t in raw.split("\n\n---\n\n") if t.strip()]
-        publish_twitter_thread(tweets)
+        logger.info("Twitter thread saved — post manually from Slack or content folder")
 
 
 def _publish_track2(story_id: str) -> None:
@@ -766,9 +764,7 @@ def _publish_track2(story_id: str) -> None:
         if linkedin_path.exists():
             publish_linkedin_post(linkedin_path.read_text())
         if twitter_path.exists():
-            raw = twitter_path.read_text()
-            tweets = [t.strip() for t in raw.split("\n\n---\n\n") if t.strip()]
-            publish_twitter_thread(tweets)
+            logger.info("Twitter thread saved — post manually from Slack or content folder")
         return
 
 
