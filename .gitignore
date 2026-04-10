@@ -1,0 +1,14 @@
+.env
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+content/*/
+newsletter/*/
+performance/*/
+*.mp4
+*.srt
+*.log
+node_modules/
+.DS_Store
+remotion-videos/

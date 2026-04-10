@@ -1,0 +1,31 @@
+# Anthropic
+anthropic>=0.40.0
+
+# Scraping
+pytrends>=4.9.2
+feedparser>=6.0.10
+requests>=2.31.0
+beautifulsoup4>=4.12.0
+playwright>=1.40.0
+
+# Data
+python-dotenv>=1.0.0
+
+# Slack
+slack-sdk>=3.26.0
+
+# Video / captions
+openai>=1.0.0
+moviepy>=1.0.3
+
+# Cloudinary (video hosting for platform APIs)
+cloudinary>=1.36.0
+
+# Google APIs (YouTube upload)
+google-api-python-client>=2.100.0
+google-auth>=2.23.0
+google-auth-oauthlib>=1.1.0
+
+# Scheduling / utilities
+schedule>=1.2.0
+python-dateutil>=2.8.2

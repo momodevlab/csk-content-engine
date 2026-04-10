@@ -1,0 +1,50 @@
+name: Weekly Performance Report (Monday)
+
+on:
+  schedule:
+    - cron: '0 14 * * 1'    # 8:00 AM CST (14:00 UTC) every Monday
+  workflow_dispatch:
+
+jobs:
+  run-performance-report:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Cache pip
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Install Playwright (LinkedIn analytics scraping)
+        run: playwright install chromium --with-deps
+
+      - name: Run performance report
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          TWITTER_BEARER_TOKEN: ${{ secrets.TWITTER_BEARER_TOKEN }}
+          GHL_API_KEY: ${{ secrets.GHL_API_KEY }}
+          GHL_LOCATION_ID: ${{ secrets.GHL_LOCATION_ID }}
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          SLACK_PERFORMANCE_CHANNEL_ID: ${{ secrets.SLACK_PERFORMANCE_CHANNEL_ID }}
+        run: python main_monday.py
+
+      - name: Upload report artifact
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: performance-report-${{ github.run_id }}
+          path: performance/
+          retention-days: 90

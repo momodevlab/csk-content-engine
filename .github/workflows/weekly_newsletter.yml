@@ -1,0 +1,48 @@
+name: Weekly Newsletter (Friday)
+
+on:
+  schedule:
+    - cron: '0 14 * * 5'    # 8:00 AM CST (14:00 UTC) every Friday
+  workflow_dispatch:
+
+jobs:
+  send-newsletter:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Cache pip
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Send newsletter
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GHL_API_KEY: ${{ secrets.GHL_API_KEY }}
+          GHL_LOCATION_ID: ${{ secrets.GHL_LOCATION_ID }}
+          GHL_FROM_EMAIL: ${{ secrets.GHL_FROM_EMAIL }}
+          GHL_REPLY_TO_EMAIL: ${{ secrets.GHL_REPLY_TO_EMAIL }}
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          SLACK_PERFORMANCE_CHANNEL_ID: ${{ secrets.SLACK_PERFORMANCE_CHANNEL_ID }}
+        run: python main_friday.py
+
+      - name: Upload newsletter artifact
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: newsletter-${{ github.run_id }}
+          path: newsletter/
+          retention-days: 30

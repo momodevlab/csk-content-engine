@@ -1,0 +1,80 @@
+name: Daily Content Pipeline (Track 1)
+
+on:
+  schedule:
+    - cron: '0 13 * * 1-5'  # 7:00 AM CST (13:00 UTC), Mon-Fri only
+  workflow_dispatch:          # manual trigger option
+
+jobs:
+  run-daily-content:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60       # HeyGen render can take 20+ min
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Cache pip dependencies
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
+
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt
+
+      - name: Install Playwright browsers
+        run: playwright install chromium --with-deps
+
+      - name: Install ffmpeg (for captions)
+        run: sudo apt-get install -y ffmpeg
+
+      - name: Set up Node.js (for Remotion)
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Remotion dependencies
+        run: cd remotion-videos && npm ci
+
+      - name: Run daily content pipeline
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          REDDIT_USER_AGENT: CSKContentBot/1.0
+          YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
+          TWITTER_BEARER_TOKEN: ${{ secrets.TWITTER_BEARER_TOKEN }}
+          PERPLEXITY_API_KEY: ${{ secrets.PERPLEXITY_API_KEY }}
+          CANVA_API_KEY: ${{ secrets.CANVA_API_KEY }}
+          GHL_API_KEY: ${{ secrets.GHL_API_KEY }}
+          GHL_LOCATION_ID: ${{ secrets.GHL_LOCATION_ID }}
+          GHL_LINKEDIN_ACCOUNT_ID: ${{ secrets.GHL_LINKEDIN_ACCOUNT_ID }}
+          GHL_FROM_EMAIL: ${{ secrets.GHL_FROM_EMAIL }}
+          GHL_REPLY_TO_EMAIL: ${{ secrets.GHL_REPLY_TO_EMAIL }}
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          SLACK_APPROVAL_CHANNEL_ID: ${{ secrets.SLACK_APPROVAL_CHANNEL_ID }}
+          SLACK_NEWS_CHANNEL_ID: ${{ secrets.SLACK_NEWS_CHANNEL_ID }}
+          SLACK_PERFORMANCE_CHANNEL_ID: ${{ secrets.SLACK_PERFORMANCE_CHANNEL_ID }}
+          SLACK_WORKSPACE_OWNER_ID: ${{ secrets.SLACK_WORKSPACE_OWNER_ID }}
+          HEYGEN_API_KEY: ${{ secrets.HEYGEN_API_KEY }}
+          HEYGEN_AVATAR_ID: ${{ secrets.HEYGEN_AVATAR_ID }}
+          HEYGEN_VOICE_ID: ${{ secrets.HEYGEN_VOICE_ID }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          CLOUDINARY_CLOUD_NAME: ${{ secrets.CLOUDINARY_CLOUD_NAME }}
+          CLOUDINARY_API_KEY: ${{ secrets.CLOUDINARY_API_KEY }}
+          CLOUDINARY_API_SECRET: ${{ secrets.CLOUDINARY_API_SECRET }}
+        run: python main_daily.py
+
+      - name: Upload content artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: daily-content-${{ github.run_id }}
+          path: |
+            content/
+            content.log
+          retention-days: 7
