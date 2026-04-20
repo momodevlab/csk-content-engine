@@ -9,9 +9,9 @@ Four pipelines, all triggered by GitHub Actions cron jobs:
 
 | Pipeline | Entry point | Schedule | What it does |
 |---|---|---|---|
-| Track 1 (Daily) | `main_daily.py` | Weekdays 7 AM CST | Scrape ideas → score → generate content → Slack approval → publish LinkedIn + Twitter |
+| Track 1 (Daily) | `main_daily.py` | Weekdays 7 AM CST | Scrape ideas → score → generate content → Slack approval → publish LinkedIn + video |
 | Track 2 (News) | `main_news.py` | Every 4 hours | Scrape AI/tech news → score → auto-post (7+) or send to Slack for review (5-6) |
-| Newsletter | `main_friday.py` | Fridays 7:30 AM CST | Compile weekly content into CSK Brief → send via GHL email |
+| Newsletter | `main_friday.py` | Fridays 7:30 AM CST | Compile weekly content into CSK Brief → send via GHL email → generate weekly hero video |
 | Performance | `main_monday.py` | Mondays 8 AM CST | Pull engagement metrics → generate report → post to #content-performance |
 
 ## Architecture
@@ -20,30 +20,32 @@ Four pipelines, all triggered by GitHub Actions cron jobs:
 Scrapers → Claude scoring → Content generation → Slack approval → Publishers
 ```
 
-- **Scrapers**: `idea_scraper.py` (Reddit, HN, Google Trends, YouTube, Twitter, Quora) and `news_scraper.py` (20+ RSS feeds + HN + Reddit)
-- **Claude**: `content_creator.py` — generates all formats (LinkedIn, Twitter thread, blog, newsletter section, carousel brief, video script) using `claude-sonnet-4-6`
-- **Idea scoring**: Also uses Claude (`claude-opus-4-6`) to score ideas 1–10 on 4 criteria: audience_relevance, engagement_signal, csk_angle, originality
+- **Scrapers**: `idea_scraper.py` (Reddit, HN, Google Trends, YouTube, Twitter/Apify, TikTok/Apify, Instagram/Apify, Quora) and `news_scraper.py` (20+ RSS feeds + HN + Reddit)
+- **Claude**: `content_creator.py` — generates all formats using `claude-sonnet-4-6`; idea scoring uses `claude-opus-4-6`
 - **Approval flow**: Posts to `#content-approval` in Slack with ✅ ❌ ✏️ reactions. Tracked in `pending_approvals.json`. Auto-approves after 24h (Track 1), 6h (Track 2), 48h (video)
 - **Publishing**: GHL Social Planner for LinkedIn, Twitter API v2 for threads, GHL email for newsletter
-- **Video pipeline**: HeyGen avatar video → Whisper captions via MoviePy → Cloudinary upload → LinkedIn + YouTube + Instagram
+- **Video pipeline**: HeyGen CLI (Video Agent Essential for daily 60s clips) → Whisper captions via MoviePy → Cloudinary upload → LinkedIn + YouTube + Instagram + TikTok
 
 ## File map
 
 ```
-main_daily.py          # Track 1 entry point
+main_daily.py          # Track 1 entry point — supports --dry-run flag
 main_news.py           # Track 2 entry point
-main_friday.py         # Newsletter entry point
+main_friday.py         # Newsletter entry point + weekly hero video generation
 main_monday.py         # Performance report entry point
 
-idea_scraper.py        # 6-source idea scraper + Claude scoring + viral style analysis
+idea_scraper.py        # 8-source scraper: Reddit, HN, Google Trends, YouTube,
+                       # Twitter (Apify), TikTok (Apify), Instagram (Apify), Quora
+                       # + Claude scoring + viral style analysis
 news_scraper.py        # RSS + HN + Reddit news scraper + deduplication
 content_creator.py     # All Claude content generation (all formats, all tracks)
+                       # Includes: LinkedIn CTA rotation, video scene manifest generator
 content_publisher.py   # Slack approval, GHL LinkedIn, Twitter threads, Canva carousel
 newsletter_builder.py  # Weekly newsletter compilation + GHL email send
 performance_tracker.py # Metrics pull + Claude performance report generation
-heygen_video.py        # HeyGen API: script → avatar video render
+heygen_video.py        # HeyGen CLI wrapper: Video Agent (daily) + manifest (weekly)
 caption_video.py       # Whisper transcription → MoviePy caption overlay
-video_publisher.py     # YouTube OAuth upload + Instagram Graph API post
+video_publisher.py     # YouTube OAuth upload + Instagram Graph API + TikTok Content API
 remotion_renderer.py   # Remotion-based video rendering (alternative to HeyGen)
 
 utils/logger.py        # Shared rotating file + console logger → content.log
@@ -52,12 +54,6 @@ utils/rate_limiter.py  # polite_delay() and api_delay() for scraper throttling
 test_connections.py    # Validates every API key without creating content
 fix_slack_channels.py  # Lists all Slack channel IDs (run when channel IDs are wrong)
 fix_youtube_oauth.py   # Runs local OAuth flow to regenerate YouTube refresh token
-
-.github/workflows/     # GitHub Actions workflow definitions (4 files)
-content/               # Runtime output: ideas, content, logs (git-ignored)
-newsletter/            # Newsletter drafts (git-ignored)
-performance/           # Performance reports (git-ignored)
-pending_approvals.json # Tracks Slack approval state across pipeline runs (runtime)
 ```
 
 ## Brand voice rules (baked into content_creator.py)
@@ -79,6 +75,32 @@ Claude writes content with these rules hard-coded in the system prompt:
 - Marketing agency founders and COOs
 - CTOs/VP Eng at Seed–Series B startups (FinTech, HealthTech, SaaS, InsurTech)
 
+## Brand identity
+
+- **Primary color**: `#1A3C5E` (navy)
+- **Accent color**: `#00B4D8` (teal)
+- **Background**: White or light only. No dark themes on any CSK marketing assets.
+- **Lead magnet**: "The AI Automation Checklist for Accounting Firms" (HTML asset)
+- **Audit booking link**: [INSERT GHL calendar link]
+
+## LinkedIn CTA rotation (mandatory on every Track 1 post)
+
+Every LinkedIn post generated by `content_creator.py` ends with exactly one rotating CTA. Index is tracked in `pending_approvals.json` as `cta_index` and increments after each post.
+
+```python
+LINKEDIN_CTAS = [
+    "I do free AI Workflow Audits for accounting firms and SMBs — 45 minutes, no pitch, just clarity on what to automate first. Link in bio to grab a spot.",
+    "Built a free checklist: 10 manual processes accounting firms should have automated by now. Link in bio to download it.",
+    "DM me 'AUDIT' and I'll send you the AI workflow checklist for your industry.",
+    "If your team is still doing {topic} manually, we should talk. Free audit link in bio — takes 45 minutes.",
+]
+```
+
+**Rules:**
+- Never use the same CTA two days in a row.
+- CTA goes on its own line, separated by a blank line from the post body.
+- The 4th CTA dynamically replaces `{topic}` with a short phrase from the idea title.
+
 ## Scoring logic
 
 Ideas are scored 0–10 across 4 criteria (Claude returns JSON):
@@ -90,9 +112,66 @@ Ideas are scored 0–10 across 4 criteria (Claude returns JSON):
 | `csk_angle` | 2 | Can we tie this to a CSK service? |
 | `originality` | 2 | Is this already overdone on LinkedIn? |
 
-- Score 7+: auto-post (Track 2) or generate video (Track 1 top idea)
+- Score 7+: auto-post (Track 2) or generate video (Track 1 top ideas)
 - Score 5–6: send to Slack for human review
 - Score <5: skip
+
+## Video pipeline — HeyGen CLI
+
+### Daily short clips (LinkedIn/Instagram/YouTube Shorts/TikTok — 60 seconds)
+Uses **Video Agent Essential** mode via HeyGen CLI. B-roll selected automatically. No premium credits.
+
+```bash
+heygen video-agent create \
+  --avatar-id $HEYGEN_AVATAR_ID \
+  --voice-id  $HEYGEN_VOICE_ID \
+  --prompt    "<script>" \
+  --mode      essential \
+  --output    ./content/{date}/track3/daily_{slug}.mp4
+```
+
+Generated for all Track 1 ideas with score >= 7 (up to top 3 per day).
+
+### Weekly hero video (YouTube/Instagram — 2–3 minutes)
+Uses a **multi-scene manifest** generated by `content_creator.generate_scene_manifest()` for the top-scoring idea of each day.
+
+`main_friday.py` finds the week's manifest and calls:
+```bash
+heygen video create-from-manifest \
+  --manifest   video_scene_manifest.json \
+  --avatar-id  $HEYGEN_AVATAR_ID \
+  --voice-id   $HEYGEN_VOICE_ID \
+  --output     ./content/{week}/weekly_video/weekly_hero.mp4
+```
+
+### Getting correct avatar ID
+```bash
+heygen avatar list   # Run once → copy correct ID → set HEYGEN_AVATAR_ID in .env
+```
+
+## Scraping sources
+
+| Source | Method | What it finds |
+|---|---|---|
+| Reddit | Public JSON (no auth) | Top posts from 10 subreddits |
+| Hacker News | Firebase API | Top stories with AI/automation keywords |
+| Google Trends | pytrends | Rising search terms |
+| YouTube | YouTube Data API v3 | Trending videos (works) |
+| Twitter/X | Apify `apidojo/tweet-scraper` | Tweets with CSK keywords (no bearer token needed) |
+| TikTok | Apify `clockworks/free-tiktok-scraper` | Trending TikTok videos |
+| Instagram | Apify `apify/instagram-scraper` | Trending posts by hashtag |
+| Quora | Playwright headless | Questions related to automation |
+
+## Publishing platforms
+
+| Platform | Method | Content types |
+|---|---|---|
+| LinkedIn | GHL Social Planner | Text posts + video |
+| Twitter/X | Twitter API v2 (Bearer Token) | Threads — token needs regeneration |
+| YouTube | YouTube Data API v3 + OAuth2 | Shorts (60s), hero video |
+| Instagram | Facebook Graph API v18.0 | Reels — token expires every 60 days |
+| TikTok | TikTok Content Posting API v2 | Videos — token from developers.tiktok.com |
+| Email | GHL Email API | Friday newsletter |
 
 ## Runtime files
 
@@ -100,9 +179,11 @@ These are created at runtime and git-ignored:
 
 - `content/{date}/ideas/scraped_ideas.json` — raw scraper output
 - `content/{date}/ideas/scored_ideas.json` — scored + sorted
-- `content/{date}/track1/` — LinkedIn post, Twitter thread, blog post, newsletter section, carousel brief
+- `content/{date}/track1/` — LinkedIn post, Twitter thread, blog post, newsletter section, carousel brief, video script, video scene manifest
 - `content/{date}/track2/{story_id}/` — news content per story
-- `pending_approvals.json` — live approval queue (read/written by multiple pipeline steps)
+- `content/{date}/track3/` — daily video MP4s and metadata
+- `content/{week}/weekly_video/weekly_hero.mp4` — weekly hero video
+- `pending_approvals.json` — live approval queue + `cta_index` for LinkedIn CTA rotation
 - `seen_stories.json` — Track 2 deduplication store
 - `content.log` — rotating log file for all pipeline activity
 
@@ -110,28 +191,29 @@ These are created at runtime and git-ignored:
 
 All secrets live in `.env` locally and in GitHub Actions secrets for CI. Never commit `.env`.
 
-See `.env.example` for the full list. Key groups:
-
 | Group | Variables | Used by |
 |---|---|---|
 | Anthropic | `ANTHROPIC_API_KEY` | content_creator.py, idea_scraper.py |
+| Apify | `APIFY_API_KEY` | idea_scraper.py — Twitter, TikTok, Instagram scraping |
 | GHL | `GHL_API_KEY`, `GHL_LOCATION_ID`, `GHL_LINKEDIN_ACCOUNT_ID`, `GHL_FROM_EMAIL`, `GHL_REPLY_TO_EMAIL` | content_publisher.py, newsletter_builder.py |
 | Slack | `SLACK_BOT_TOKEN`, `SLACK_APPROVAL_CHANNEL_ID`, `SLACK_NEWS_CHANNEL_ID`, `SLACK_PERFORMANCE_CHANNEL_ID`, `SLACK_WORKSPACE_OWNER_ID` | all mains |
 | HeyGen | `HEYGEN_API_KEY`, `HEYGEN_AVATAR_ID`, `HEYGEN_VOICE_ID` | heygen_video.py |
 | YouTube | `YOUTUBE_API_KEY` (scraping), `YOUTUBE_CLIENT_ID`, `YOUTUBE_CLIENT_SECRET`, `YOUTUBE_REFRESH_TOKEN` (upload) | idea_scraper.py, video_publisher.py |
-| Twitter | `TWITTER_BEARER_TOKEN` | idea_scraper.py, content_publisher.py |
-| Instagram | `INSTAGRAM_USER_ID`, `INSTAGRAM_ACCESS_TOKEN` | video_publisher.py |
+| Twitter | `TWITTER_BEARER_TOKEN` | content_publisher.py (publishing only — scraping replaced by Apify) |
+| Instagram | `INSTAGRAM_USER_ID`, `INSTAGRAM_ACCESS_TOKEN` | video_publisher.py — expires every 60 days |
+| TikTok | `TIKTOK_CLIENT_KEY`, `TIKTOK_CLIENT_SECRET`, `TIKTOK_ACCESS_TOKEN` | video_publisher.py |
 | Cloudinary | `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, `CLOUDINARY_API_SECRET` | video_publisher.py |
 | OpenAI | `OPENAI_API_KEY` | caption_video.py (Whisper only) |
 | Perplexity | `PERPLEXITY_API_KEY` | news_scraper.py |
 
 ## Known issues / token status (as of April 2026)
 
-- **Twitter Bearer Token**: returning 401 — needs regeneration at developer.twitter.com
-- **HeyGen Avatar ID**: `HEYGEN_AVATAR_ID` in `.env` does not match any avatar — update with correct ID from HeyGen dashboard
+- **Twitter Bearer Token**: returning 401 — scraping replaced by Apify. Bearer Token still needed for publishing threads; regenerate at developer.twitter.com when activating Twitter posting.
+- **HeyGen Avatar ID**: run `heygen avatar list` to confirm correct ID, update `HEYGEN_AVATAR_ID` in `.env`
 - **YouTube refresh token**: expired — run `python3 fix_youtube_oauth.py` to regenerate
-- **Instagram access token**: expired April 2, 2026 — long-lived tokens expire every 60 days, refresh via Meta Business Manager
-- **Canva API key**: not set — enterprise plan required for API key; use Canva MCP connector instead (see MCP section below)
+- **Instagram access token**: expired April 2, 2026 — tokens expire every 60 days; refresh via Meta Business Manager. Pipeline logs a clear error message when expired.
+- **TikTok access token**: not yet configured — register app at developers.tiktok.com, request `video.publish` scope, complete OAuth flow
+- **Canva API key**: not set — enterprise plan required; use Canva MCP connector instead (see below)
 
 ## Local setup
 
@@ -139,26 +221,31 @@ See `.env.example` for the full list. Key groups:
 git clone https://github.com/momodevlab/csk-content-engine.git
 cd csk-content-engine
 pip install -r requirements.txt
+npm install -g @heygen/cli          # HeyGen CLI for video generation
 playwright install chromium
-cp .env.example .env   # fill in your values
-python3 test_connections.py  # verify all connections before running
+cp .env.example .env                # fill in your values
+heygen avatar list                  # confirm HEYGEN_AVATAR_ID
+python3 test_connections.py         # verify all connections before running
 ```
 
 ## Running pipelines locally
 
 ```bash
-python3 main_daily.py     # Track 1 — daily content
-python3 main_news.py      # Track 2 — news feed
-python3 main_friday.py    # Newsletter
-python3 main_monday.py    # Performance report
+python3 main_daily.py               # Track 1 — daily content (live)
+python3 main_daily.py --dry-run     # Track 1 — generate content locally, no Slack/publish
+python3 main_news.py                # Track 2 — news feed
+python3 main_friday.py              # Newsletter + weekly video
+python3 main_monday.py              # Performance report
 ```
 
 ## Utility scripts
 
 ```bash
-python3 test_connections.py     # check all API keys
+python3 test_connections.py     # check all API keys (includes Apify, HeyGen CLI, TikTok)
 python3 fix_slack_channels.py   # list Slack channel IDs
 python3 fix_youtube_oauth.py    # regenerate YouTube OAuth refresh token
+heygen avatar list              # get correct avatar ID for .env
+python3 heygen_video.py         # list available avatars (same as above, from Python)
 ```
 
 ## GitHub Actions secrets
@@ -167,6 +254,8 @@ Before the workflows will run on GitHub, add every variable from `.env` as a rep
 `Settings → Secrets and variables → Actions → New repository secret`
 
 The workflow files in `.github/workflows/` reference them as `${{ secrets.VARIABLE_NAME }}`.
+
+Add `npm install -g @heygen/cli` to each workflow that runs video generation.
 
 ## Canva MCP (alternative to API key)
 
@@ -190,7 +279,7 @@ The `generate_canva_carousel()` function in `content_publisher.py` will need to 
 ## Approval flow detail
 
 1. Pipeline posts to `#content-approval` with ✅ ❌ ✏️ reactions pre-added
-2. Entry written to `pending_approvals.json` with `auto_approve_at` timestamp
+2. Entry written to `pending_approvals.json` with `auto_approve_at` timestamp and current `cta_index`
 3. GitHub Actions cron runs `check_reactions()` + `check_auto_approvals()` hourly
 4. ✅ reaction → loads content from disk → publishes to platforms → updates status to "approved"
 5. ❌ reaction → status set to "rejected", removed from queue
@@ -201,9 +290,10 @@ The `generate_canva_carousel()` function in `content_publisher.py` will need to 
 ## Content output formats (per Track 1 package)
 
 Each idea generates all of these:
-- `linkedin_post.md` — full LinkedIn post (~1200–1800 chars)
-- `twitter_thread.md` — 4–6 tweets separated by `\n\n---\n\n`
-- `blog_post.md` — 800–1200 word blog post
+- `linkedin_post.md` — full LinkedIn post (~150–300 words) with rotating CTA appended
+- `twitter_thread.md` — 8–10 tweets separated by `\n\n---\n\n`
+- `blog_post.md` — 800–1,200 word blog post in markdown
 - `newsletter_section.md` — 2–3 paragraph newsletter blurb
 - `carousel_brief.json` — slide-by-slide brief for Canva carousel generation
-- `video_script.md` — 60-second spoken word script for HeyGen avatar
+- `video_script.md` — 60-second spoken word script for HeyGen Video Agent (daily)
+- `video_scene_manifest.json` — multi-scene manifest with avatar + b-roll prompts (top idea only, used for weekly hero video on Friday)

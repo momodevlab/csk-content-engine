@@ -137,10 +137,24 @@ def post_track1_for_approval(
     date_str = content_package.get("date_str", datetime.now(timezone.utc).strftime("%Y-%m-%d"))
 
     linkedin_text = content.get("linkedin_post", "") or ""
-    linkedin_preview = linkedin_text[:500] + (" ... [see file]" if len(linkedin_text) > 500 else "")
+    linkedin_preview = (
+        linkedin_text[:500] + (" ... [see full file]" if len(linkedin_text) > 500 else "")
+        if linkedin_text
+        else "_(LinkedIn post generation failed — check content.log)_"
+    )
 
-    twitter_thread = content.get("twitter_thread") or []
-    twitter_full = "\n\n".join(twitter_thread) if twitter_thread else "(no thread generated)"
+    twitter_raw = content.get("twitter_thread") or []
+    if isinstance(twitter_raw, list):
+        twitter_thread = twitter_raw
+    elif isinstance(twitter_raw, str):
+        twitter_thread = [t.strip() for t in twitter_raw.split("\n\n---\n\n") if t.strip()]
+    else:
+        twitter_thread = []
+    twitter_full = (
+        "\n\n".join(twitter_thread[:2]) + ("\n\n_(+ more tweets in file)_" if len(twitter_thread) > 2 else "")
+        if twitter_thread
+        else "_(Twitter thread generation failed — check content.log)_"
+    )
 
     score = idea.get("scores", {}).get("total", "—")
     source = idea.get("source", "unknown")

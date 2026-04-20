@@ -18,6 +18,7 @@ from pytrends.request import TrendReq
 from googleapiclient.discovery import build
 from playwright.sync_api import sync_playwright
 from anthropic import Anthropic
+from apify_client import ApifyClient
 from dotenv import load_dotenv
 
 from utils.logger import get_logger
@@ -58,8 +59,34 @@ YOUTUBE_QUERIES = [
 ]
 YOUTUBE_MIN_VIEWS = 1000
 
-TWITTER_QUERY = "#automation OR #AItools OR #accountingtech OR #insurtech lang:en -is:retweet"
+TWITTER_KEYWORDS = [
+    "AI automation accounting",
+    "workflow automation SMB",
+    "AI integration small business",
+    "manual processes accounting firm",
+    "automate bookkeeping",
+    "AI tools insurance agency",
+    "startup automation tools",
+]
 TWITTER_MIN_LIKES = 50
+
+TIKTOK_KEYWORDS = [
+    "AI automation business",
+    "workflow automation",
+    "accounting software AI",
+    "small business AI tools",
+    "automate your business",
+]
+TIKTOK_MIN_LIKES = 500
+
+INSTAGRAM_HASHTAGS = [
+    "aiautomation",
+    "workflowautomation",
+    "accountingtech",
+    "smallbusinessai",
+    "businessautomation",
+]
+INSTAGRAM_MIN_LIKES = 200
 
 QUORA_QUERIES = [
     "automate accounting workflows",
@@ -332,58 +359,149 @@ def scrape_youtube() -> list[dict]:
     return results
 
 
-def scrape_twitter() -> list[dict]:
+def scrape_twitter_apify() -> list[dict]:
     """
-    Searches Twitter/X recent tweets using bearer token (read-only).
-    Filters to tweets with >= 50 likes from the last 24 hours.
-    Returns list of idea dicts. Skips silently if no bearer token is set.
+    Scrapes Twitter/X via Apify (apidojo/tweet-scraper). No bearer token needed.
+    Searches TWITTER_KEYWORDS, filters to tweets with >= 50 likes.
+    Returns list of idea dicts.
     """
-    logger.info("Scraping Twitter/X...")
+    logger.info("Scraping Twitter/X via Apify...")
     results = []
+    api_key = os.environ.get("APIFY_API_KEY", "")
+    if not api_key:
+        logger.warning("APIFY_API_KEY not set — skipping Twitter/X scrape")
+        return results
     try:
-        bearer_token = os.environ.get("TWITTER_BEARER_TOKEN", "")
-        if not bearer_token:
-            logger.info("Twitter/X: no bearer token set, skipping")
-            return results
-        headers = {"Authorization": f"Bearer {bearer_token}"}
-        params = {
-            "query": TWITTER_QUERY,
-            "max_results": 100,
-            "tweet.fields": "public_metrics,created_at,author_id",
-            "expansions": "author_id",
+        client = ApifyClient(api_key)
+        run_input = {
+            "searchTerms": TWITTER_KEYWORDS,
+            "maxItems": 30,
+            "sort": "Latest",
+            "twitterHandles": [],
         }
-        resp = requests.get(
-            "https://api.twitter.com/2/tweets/search/recent",
-            headers=headers,
-            params=params,
-            timeout=15,
-        )
-        resp.raise_for_status()
-        data = resp.json()
-
-        for tweet in data.get("data", []):
-            metrics = tweet.get("public_metrics", {})
-            likes = metrics.get("like_count", 0)
+        run = client.actor("apidojo/tweet-scraper").call(run_input=run_input)
+        items = list(client.dataset(run["defaultDatasetId"]).iterate_items())
+        for item in items:
+            likes = item.get("likeCount", 0) or 0
             if likes < TWITTER_MIN_LIKES:
                 continue
-            text = tweet.get("text", "")
+            text = item.get("text", "") or item.get("fullText", "")
+            if not text:
+                continue
             results.append({
                 "id": _make_id("twitter", text),
                 "source": "twitter",
                 "title": text[:120],
                 "body_preview": text,
-                "url": f"https://twitter.com/i/web/status/{tweet['id']}",
+                "url": item.get("url", ""),
                 "engagement": {
                     "score": likes,
-                    "comments": metrics.get("reply_count", 0),
-                    "retweets": metrics.get("retweet_count", 0),
+                    "comments": item.get("replyCount", 0),
+                    "retweets": item.get("retweetCount", 0),
                 },
                 "scraped_at": datetime.now(timezone.utc).isoformat(),
             })
         api_delay()
     except Exception as e:
-        logger.error(f"Twitter/X scraper failed: {e}")
-    logger.info(f"Twitter/X: {len(results)} tweets above threshold")
+        logger.error(f"Twitter/X Apify scraper failed: {e}")
+    logger.info(f"Twitter/X (Apify): {len(results)} tweets above threshold")
+    return results
+
+
+def scrape_tiktok_apify() -> list[dict]:
+    """
+    Scrapes TikTok via Apify (clockworks/free-tiktok-scraper).
+    Searches TIKTOK_KEYWORDS, filters to videos with >= 500 likes.
+    Returns list of idea dicts.
+    """
+    logger.info("Scraping TikTok via Apify...")
+    results = []
+    api_key = os.environ.get("APIFY_API_KEY", "")
+    if not api_key:
+        logger.warning("APIFY_API_KEY not set — skipping TikTok scrape")
+        return results
+    try:
+        client = ApifyClient(api_key)
+        run_input = {
+            "searchQueries": TIKTOK_KEYWORDS,
+            "maxItems": 20,
+            "shouldDownloadVideos": False,
+            "shouldDownloadCovers": False,
+        }
+        run = client.actor("clockworks/free-tiktok-scraper").call(run_input=run_input)
+        items = list(client.dataset(run["defaultDatasetId"]).iterate_items())
+        for item in items:
+            likes = item.get("diggCount", 0) or 0
+            if likes < TIKTOK_MIN_LIKES:
+                continue
+            desc = item.get("text", "") or item.get("desc", "")
+            if not desc:
+                continue
+            results.append({
+                "id": _make_id("tiktok", desc),
+                "source": "tiktok",
+                "title": desc[:120],
+                "body_preview": desc,
+                "url": item.get("webVideoUrl", ""),
+                "engagement": {
+                    "score": likes,
+                    "comments": item.get("commentCount", 0),
+                    "shares": item.get("shareCount", 0),
+                    "views": item.get("playCount", 0),
+                },
+                "scraped_at": datetime.now(timezone.utc).isoformat(),
+            })
+        api_delay()
+    except Exception as e:
+        logger.error(f"TikTok Apify scraper failed: {e}")
+    logger.info(f"TikTok (Apify): {len(results)} videos above threshold")
+    return results
+
+
+def scrape_instagram_apify() -> list[dict]:
+    """
+    Scrapes Instagram via Apify (apify/instagram-scraper).
+    Searches INSTAGRAM_HASHTAGS, filters to posts with >= 200 likes.
+    Returns list of idea dicts.
+    """
+    logger.info("Scraping Instagram via Apify...")
+    results = []
+    api_key = os.environ.get("APIFY_API_KEY", "")
+    if not api_key:
+        logger.warning("APIFY_API_KEY not set — skipping Instagram scrape")
+        return results
+    try:
+        client = ApifyClient(api_key)
+        run_input = {
+            "hashtags": INSTAGRAM_HASHTAGS,
+            "resultsLimit": 20,
+            "searchType": "hashtag",
+        }
+        run = client.actor("apify/instagram-scraper").call(run_input=run_input)
+        items = list(client.dataset(run["defaultDatasetId"]).iterate_items())
+        for item in items:
+            likes = item.get("likesCount", 0) or 0
+            if likes < INSTAGRAM_MIN_LIKES:
+                continue
+            caption = item.get("caption", "") or ""
+            if not caption:
+                continue
+            results.append({
+                "id": _make_id("instagram", caption),
+                "source": "instagram",
+                "title": caption[:120],
+                "body_preview": caption[:500],
+                "url": item.get("url", ""),
+                "engagement": {
+                    "score": likes,
+                    "comments": item.get("commentsCount", 0),
+                },
+                "scraped_at": datetime.now(timezone.utc).isoformat(),
+            })
+        api_delay()
+    except Exception as e:
+        logger.error(f"Instagram Apify scraper failed: {e}")
+    logger.info(f"Instagram (Apify): {len(results)} posts above threshold")
     return results
 
 
@@ -592,12 +710,14 @@ def run_idea_scraper(date_str: str) -> list[dict]:
     # 1. Run all scrapers
     all_items: list[dict] = []
     scrapers = [
-        ("Reddit", scrape_reddit, [date_str]),
-        ("Hacker News", scrape_hacker_news, []),
+        ("Reddit",    scrape_reddit,           [date_str]),
+        ("Hacker News", scrape_hacker_news,    []),
         ("Google Trends", scrape_google_trends, []),
-        ("YouTube", scrape_youtube, []),
-        ("Twitter/X", scrape_twitter, []),
-        ("Quora", scrape_quora, []),
+        ("YouTube",   scrape_youtube,           []),
+        ("Twitter/X", scrape_twitter_apify,     []),
+        ("TikTok",    scrape_tiktok_apify,      []),
+        ("Instagram", scrape_instagram_apify,   []),
+        ("Quora",     scrape_quora,             []),
     ]
     for name, fn, args in scrapers:
         try:

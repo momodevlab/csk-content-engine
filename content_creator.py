@@ -37,7 +37,77 @@ MAX_TOKENS = {
     "news_linkedin":      500,
     "news_twitter":       700,
     "video_script":       400,
+    "scene_manifest":    1200,
 }
+
+# ---------------------------------------------------------------------------
+# LinkedIn CTA rotation
+# ---------------------------------------------------------------------------
+
+LINKEDIN_CTAS = [
+    "I do free AI Workflow Audits for accounting firms and SMBs — 45 minutes, no pitch, just clarity on what to automate first. Link in bio to grab a spot.",
+    "Built a free checklist: 10 manual processes accounting firms should have automated by now. Link in bio to download it.",
+    "DM me 'AUDIT' and I'll send you the AI workflow checklist for your industry.",
+    "If your team is still doing {topic} manually, we should talk. Free audit link in bio — takes 45 minutes.",
+]
+
+PENDING_APPROVALS_PATH = "pending_approvals.json"
+
+
+def _get_cta_index() -> int:
+    """Reads cta_index from pending_approvals.json. Returns 0 if missing."""
+    try:
+        import json as _json
+        with open(PENDING_APPROVALS_PATH) as f:
+            data = _json.load(f)
+        if isinstance(data, dict):
+            return int(data.get("cta_index", 0))
+        # Legacy format: list of approvals — no cta_index yet
+        return 0
+    except Exception:
+        return 0
+
+
+def _save_cta_index(index: int) -> None:
+    """Writes cta_index into pending_approvals.json, preserving existing data."""
+    import json as _json
+    try:
+        try:
+            with open(PENDING_APPROVALS_PATH) as f:
+                data = _json.load(f)
+        except Exception:
+            data = {}
+        if isinstance(data, list):
+            # Migrate legacy list format to dict format
+            data = {"approvals": data, "cta_index": index}
+        else:
+            data["cta_index"] = index
+        with open(PENDING_APPROVALS_PATH, "w") as f:
+            _json.dump(data, f, indent=2)
+    except Exception as e:
+        logger.warning(f"Could not save cta_index: {e}")
+
+
+def _get_cta(idea_title: str) -> str:
+    """
+    Returns the next CTA from the rotation and increments the stored index.
+    For the 4th CTA (index 3), replaces {topic} with a short phrase from the idea title.
+    Never repeats the same CTA on consecutive runs.
+    """
+    current_index = _get_cta_index()
+    cta_template = LINKEDIN_CTAS[current_index % len(LINKEDIN_CTAS)]
+
+    if "{topic}" in cta_template:
+        # Extract a 3-5 word topic phrase from the title
+        words = [w for w in idea_title.split() if len(w) > 3][:5]
+        topic_phrase = " ".join(words).lower().rstrip(".,:")
+        cta = cta_template.replace("{topic}", topic_phrase)
+    else:
+        cta = cta_template
+
+    next_index = (current_index + 1) % len(LINKEDIN_CTAS)
+    _save_cta_index(next_index)
+    return cta
 
 VOICE_SYSTEM_PROMPT = """You are writing content for CSK Tech Solutions, a technology services company
 specializing in AI, automation, and data engineering.
@@ -185,7 +255,11 @@ Write a LinkedIn text post for CSK Tech Solutions. Requirements:
 {f"- Follow the VIRAL STYLE BLUEPRINT above for structure and rhythm. Use the same hook type, body flow, and CTA approach — but with CSK's voice and your own words." if style else "- Line 1 must be a single-line hook: a surprising stat, bold claim, or counterintuitive truth that stops the scroll. Structure after the hook: Problem → Insight → Practical takeaway → CTA."}
 - Output only the post text. No preamble, no explanation."""
 
-    return _call_claude(client, prompt, "linkedin_post")
+    post = _call_claude(client, prompt, "linkedin_post")
+    if post:
+        cta = _get_cta(idea.get("title", ""))
+        post = f"{post}\n\n{cta}"
+    return post
 
 
 def create_twitter_thread(idea: dict, client: Anthropic) -> "Optional[List[str]]":
@@ -348,6 +422,67 @@ Write a spoken video script for Monique, CEO of CSK Tech Solutions. This will be
 - Every sentence should sound natural when spoken aloud."""
 
     return _call_claude(client, prompt, "video_script")
+
+
+# ---------------------------------------------------------------------------
+# Video scene manifest (weekly hero video — top idea only)
+# ---------------------------------------------------------------------------
+
+SCENE_MANIFEST_SYSTEM_PROMPT = """You are a video producer for CSK Tech Solutions, an AI automation company.
+Given a 60-second video script, break it into a multi-scene video manifest for a 2-3 minute expanded version suitable for YouTube and Instagram.
+
+Rules:
+- Alternate between avatar speech and b-roll every 5-8 seconds
+- Keep each avatar segment under 8 seconds
+- B-roll prompts must be specific, professional, and cinematic — no generic stock footage
+- B-roll should reference the industry and topic (accounting, insurance, SaaS — whichever applies)
+- Total runtime should be 120-180 seconds
+
+Return ONLY valid JSON in this exact format, no explanation:
+{
+  "scenes": [
+    {"type": "avatar", "script": "spoken text here", "duration": 6},
+    {"type": "broll", "prompt": "detailed cinematic b-roll description", "duration": 4}
+  ],
+  "estimated_duration": 145,
+  "topic": "topic string",
+  "industry": "industry string"
+}"""
+
+
+def generate_scene_manifest(script: str, topic: str, industry: str, date_str: str) -> dict | None:
+    """
+    Generates a multi-scene video manifest from a 60-second script.
+    Called only for the top-scoring idea of the day.
+    Saves to content/{date}/track1/video_scene_manifest.json.
+    Returns the manifest dict or None on failure.
+    """
+    logger.info(f"Generating scene manifest for: {topic[:60]}")
+    client = Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
+
+    user_prompt = f"Script: {script}\nTopic: {topic}\nIndustry: {industry}"
+
+    try:
+        response = client.messages.create(
+            model=MODEL,
+            max_tokens=MAX_TOKENS["scene_manifest"],
+            system=SCENE_MANIFEST_SYSTEM_PROMPT,
+            messages=[{"role": "user", "content": user_prompt}],
+        )
+        raw = response.content[0].text.strip()
+        cleaned = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw, flags=re.MULTILINE)
+        manifest = json.loads(cleaned)
+
+        out_path = Path(f"content/{date_str}/track1/video_scene_manifest.json")
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(out_path, "w") as f:
+            json.dump(manifest, f, indent=2)
+        logger.info(f"Scene manifest saved → {out_path} ({manifest.get('estimated_duration')}s, {len(manifest.get('scenes', []))} scenes)")
+        return manifest
+
+    except Exception as e:
+        logger.error(f"Scene manifest generation failed: {e}")
+        return None
 
 
 # ---------------------------------------------------------------------------

@@ -6,6 +6,7 @@ Run: python3 test_connections.py
 import os
 import sys
 import json
+import subprocess
 import requests
 from dotenv import load_dotenv
 
@@ -308,6 +309,78 @@ try:
         check("Instagram Graph API", False, f"HTTP {resp.status_code}: {resp.json().get('error', {}).get('message', resp.text[:100])}")
 except Exception as e:
     check("Instagram Graph API", False, str(e))
+
+
+# ---------------------------------------------------------------------------
+# Apify
+# ---------------------------------------------------------------------------
+section("Apify")
+try:
+    from apify_client import ApifyClient
+    apify_key = os.environ.get("APIFY_API_KEY", "")
+    if not apify_key:
+        check("Apify API key", False, "APIFY_API_KEY not set")
+    else:
+        client = ApifyClient(apify_key)
+        user = client.user("me").get()
+        username = user.get("username", "unknown")
+        plan = user.get("plan", {}).get("id", "unknown")
+        check("Apify API key", True, f"username: {username}, plan: {plan}")
+except Exception as e:
+    check("Apify API key", False, str(e))
+
+
+# ---------------------------------------------------------------------------
+# HeyGen CLI
+# ---------------------------------------------------------------------------
+section("HeyGen CLI")
+try:
+    result = subprocess.run(
+        ["heygen", "avatar", "list"],
+        capture_output=True, text=True, timeout=30,
+    )
+    if result.returncode == 0:
+        try:
+            avatars = json.loads(result.stdout)
+            avatar_ids = [a.get("avatar_id", "") for a in avatars[:3]]
+            target = os.environ.get("HEYGEN_AVATAR_ID", "")
+            found = any(a.get("avatar_id") == target for a in avatars)
+            check("HeyGen CLI", True, f"{len(avatars)} avatar(s) available")
+            check("HeyGen avatar ID", found, target if found else f"NOT FOUND — available: {avatar_ids}")
+        except Exception:
+            check("HeyGen CLI", True, result.stdout[:100].strip())
+    else:
+        check("HeyGen CLI", False, result.stderr[:200].strip() or "non-zero exit")
+except FileNotFoundError:
+    check("HeyGen CLI", False, "heygen CLI not installed — run: npm install -g @heygen/cli")
+except Exception as e:
+    check("HeyGen CLI", False, str(e))
+
+
+# ---------------------------------------------------------------------------
+# TikTok Content Posting API
+# ---------------------------------------------------------------------------
+section("TikTok")
+try:
+    access_token = os.environ.get("TIKTOK_ACCESS_TOKEN", "")
+    if not access_token:
+        check("TikTok access token", False, "TIKTOK_ACCESS_TOKEN not set — register at developers.tiktok.com")
+    else:
+        resp = requests.get(
+            "https://open.tiktokapis.com/v2/user/info/",
+            headers={"Authorization": f"Bearer {access_token}"},
+            params={"fields": "open_id,display_name"},
+            timeout=10,
+        )
+        if resp.status_code == 200:
+            data = resp.json().get("data", {}).get("user", {})
+            check("TikTok access token", True, f"@{data.get('display_name', data.get('open_id', 'unknown'))}")
+        elif resp.status_code == 401:
+            check("TikTok access token", False, "Token expired — regenerate at developers.tiktok.com")
+        else:
+            check("TikTok access token", False, f"HTTP {resp.status_code}: {resp.text[:100]}")
+except Exception as e:
+    check("TikTok access token", False, str(e))
 
 
 # ---------------------------------------------------------------------------

@@ -209,6 +209,83 @@ def publish_youtube_short(video_path: str, title: str, description: str) -> dict
 # Part 4: Instagram Reels via Graph API
 # ---------------------------------------------------------------------------
 
+def publish_tiktok_video(video_path: str, caption: str) -> dict:
+    """
+    Uploads a video to TikTok using the Content Posting API v2.
+    Requires TIKTOK_ACCESS_TOKEN with video.publish scope.
+    Two-step: initialize upload → upload file bytes → returns publish_id.
+    Raises RuntimeError if token is missing or expired.
+    """
+    access_token = os.environ.get("TIKTOK_ACCESS_TOKEN", "")
+    if not access_token:
+        raise RuntimeError(
+            "TikTok token missing. Set TIKTOK_ACCESS_TOKEN in .env. "
+            "Register at developers.tiktok.com → Create App → video.publish scope."
+        )
+
+    file_size = os.path.getsize(video_path)
+    headers = {
+        "Authorization": f"Bearer {access_token}",
+        "Content-Type": "application/json; charset=UTF-8",
+    }
+
+    # Step 1: Initialize
+    logger.info(f"Initializing TikTok upload: {video_path}")
+    init_resp = requests.post(
+        "https://open.tiktokapis.com/v2/post/publish/video/init/",
+        headers=headers,
+        json={
+            "post_info": {
+                "title": caption[:2200],
+                "privacy_level": "FOLLOWER_OF_CREATOR",
+                "disable_duet": False,
+                "disable_comment": False,
+                "disable_stitch": False,
+                "video_cover_timestamp_ms": 1000,
+            },
+            "source_info": {
+                "source": "FILE_UPLOAD",
+                "video_size": file_size,
+                "chunk_size": file_size,
+                "total_chunk_count": 1,
+            },
+        },
+        timeout=30,
+    )
+
+    if init_resp.status_code == 401:
+        raise RuntimeError(
+            "TikTok token expired or invalid. Refresh at: "
+            "developers.tiktok.com → your app → regenerate access token."
+        )
+    init_resp.raise_for_status()
+
+    init_data = init_resp.json().get("data", {})
+    publish_id = init_data.get("publish_id")
+    upload_url = init_data.get("upload_url")
+    if not publish_id or not upload_url:
+        raise RuntimeError(f"TikTok init returned no publish_id/upload_url: {init_resp.json()}")
+
+    # Step 2: Upload file
+    logger.info(f"Uploading video bytes to TikTok ({file_size / (1024*1024):.1f} MB)")
+    with open(video_path, "rb") as f:
+        video_data = f.read()
+
+    upload_resp = requests.put(
+        upload_url,
+        headers={
+            "Content-Type": "video/mp4",
+            "Content-Range": f"bytes 0-{file_size - 1}/{file_size}",
+            "Content-Length": str(file_size),
+        },
+        data=video_data,
+        timeout=300,
+    )
+    upload_resp.raise_for_status()
+    logger.info(f"TikTok video uploaded: publish_id={publish_id}")
+    return {"publish_id": publish_id, "status": "published"}
+
+
 def publish_instagram_reel(video_url: str, caption: str) -> dict:
     """
     Publishes a video as an Instagram Reel using the Facebook Graph API v18.0.
@@ -222,6 +299,12 @@ def publish_instagram_reel(video_url: str, caption: str) -> dict:
     """
     ig_user_id   = os.environ["INSTAGRAM_USER_ID"]
     access_token = os.environ["INSTAGRAM_ACCESS_TOKEN"]
+
+    if not access_token:
+        raise RuntimeError(
+            "Instagram token expired. Refresh at Meta Business Manager > Tools > Graph API Explorer. "
+            "Tokens expire every 60 days."
+        )
 
     # Step 1: Create container
     logger.info(f"Creating Instagram Reel container: {video_url[:80]}")
@@ -336,6 +419,7 @@ def publish_video_all_platforms(
     2. Publish LinkedIn video (uses Cloudinary URL)
     3. Upload YouTube Short (uses local file path)
     4. Publish Instagram Reel (uses Cloudinary URL)
+    5. Publish TikTok video (uses local file path)
 
     Each platform failure is logged and Slack-alerted independently.
     The orchestrator never raises — failed platforms are recorded in results dict.
@@ -346,7 +430,8 @@ def publish_video_all_platforms(
         "cloudinary_url": "https://...",
         "linkedin":  {"status": "success"|"failed", "post_url": "...", "error": "..."},
         "youtube":   {"status": "success"|"failed", "video_id": "...", "url": "..."},
-        "instagram": {"status": "success"|"failed", "media_id": "...", "error": "..."}
+        "instagram": {"status": "success"|"failed", "media_id": "...", "error": "..."},
+        "tiktok":    {"status": "success"|"failed", "publish_id": "...", "error": "..."}
     }
     """
     results: dict = {}
@@ -399,6 +484,18 @@ def publish_video_all_platforms(
         logger.error(f"Instagram Reel publish failed: {e}")
         _alert_slack(f"⚠️ *INSTAGRAM REEL FAILED*\nVideo: {video_id}\nError: {e}")
         results["instagram"] = {"status": "failed", "error": str(e)}
+
+    # 5. TikTok
+    try:
+        tt_result = publish_tiktok_video(captioned_video_path, linkedin_caption)
+        results["tiktok"] = {
+            "status":     "success",
+            "publish_id": tt_result.get("publish_id", ""),
+        }
+    except Exception as e:
+        logger.error(f"TikTok publish failed: {e}")
+        _alert_slack(f"⚠️ *TIKTOK PUBLISH FAILED*\nVideo: {video_id}\nError: {e}")
+        results["tiktok"] = {"status": "failed", "error": str(e)}
 
     # Always post summary
     _log_publish_summary(results)
