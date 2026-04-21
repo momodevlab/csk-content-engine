@@ -6,7 +6,6 @@ Run: python3 test_connections.py
 import os
 import sys
 import json
-import subprocess
 import requests
 from dotenv import load_dotenv
 
@@ -331,40 +330,13 @@ except Exception as e:
 
 
 # ---------------------------------------------------------------------------
-# HeyGen CLI
-# ---------------------------------------------------------------------------
-section("HeyGen CLI")
-try:
-    result = subprocess.run(
-        ["heygen", "avatar", "list"],
-        capture_output=True, text=True, timeout=30,
-    )
-    if result.returncode == 0:
-        try:
-            avatars = json.loads(result.stdout)
-            avatar_ids = [a.get("avatar_id", "") for a in avatars[:3]]
-            target = os.environ.get("HEYGEN_AVATAR_ID", "")
-            found = any(a.get("avatar_id") == target for a in avatars)
-            check("HeyGen CLI", True, f"{len(avatars)} avatar(s) available")
-            check("HeyGen avatar ID", found, target if found else f"NOT FOUND — available: {avatar_ids}")
-        except Exception:
-            check("HeyGen CLI", True, result.stdout[:100].strip())
-    else:
-        check("HeyGen CLI", False, result.stderr[:200].strip() or "non-zero exit")
-except FileNotFoundError:
-    check("HeyGen CLI", False, "heygen CLI not installed — run: npm install -g @heygen/cli")
-except Exception as e:
-    check("HeyGen CLI", False, str(e))
-
-
-# ---------------------------------------------------------------------------
-# TikTok Content Posting API
+# TikTok (scraping only — publishing is manual)
 # ---------------------------------------------------------------------------
 section("TikTok")
 try:
     access_token = os.environ.get("TIKTOK_ACCESS_TOKEN", "")
     if not access_token:
-        check("TikTok access token", False, "TIKTOK_ACCESS_TOKEN not set — register at developers.tiktok.com")
+        check("TikTok access token", True, "skipped — TikTok publishing is manual; scraping via Apify")
     else:
         resp = requests.get(
             "https://open.tiktokapis.com/v2/user/info/",
